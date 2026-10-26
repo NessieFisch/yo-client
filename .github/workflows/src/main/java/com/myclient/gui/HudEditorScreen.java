@@ -2,6 +2,7 @@ package com.myclient.gui;
 
 import com.myclient.ClientConfig;
 import com.myclient.ScreenUtil;
+import com.myclient.hud.Gfx;
 import com.myclient.hud.HudLayout;
 import com.myclient.sky.CursorRenderer;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
@@ -55,11 +56,8 @@ public class HudEditorScreen extends Screen {
             HudLayout.Rect r = e.getValue();
             boolean active = e.getKey().equals(drag) || (drag == null && e.getKey().equals(hover));
             int col = active ? c.accent : 0xAAFFFFFF;
-            g.fill(r.x(), r.y(), r.x() + r.w(), r.y() + r.h(), active ? 0x33FFFFFF : 0x15FFFFFF);
-            g.fill(r.x() - 1, r.y() - 1, r.x() + r.w() + 1, r.y(), col);
-            g.fill(r.x() - 1, r.y() + r.h(), r.x() + r.w() + 1, r.y() + r.h() + 1, col);
-            g.fill(r.x() - 1, r.y(), r.x(), r.y() + r.h(), col);
-            g.fill(r.x() + r.w(), r.y(), r.x() + r.w() + 1, r.y() + r.h(), col);
+            Gfx.border(g, r.x() - 2, r.y() - 2, r.w() + 4, r.h() + 4, 7, col,
+                    active ? 0x33FFFFFF : 0x14FFFFFF, active ? 0x33FFFFFF : 0x14FFFFFF);
             if (active) g.text(font, HudLayout.name(e.getKey()), r.x(), Math.max(0, r.y() - 10), c.accent, true);
         }
 
@@ -71,9 +69,10 @@ public class HudEditorScreen extends Screen {
 
     private void drawButton(GuiGraphicsExtractor g, int x, int y, int w, int h, String label, int mx, int my, boolean primary) {
         ClientConfig c = ClientConfig.get();
-        int bg = primary ? ((c.accent & 0x00FFFFFF) | 0xCC000000) : (in(mx, my, x, y, w, h) ? 0xCC444444 : 0xCC222222);
-        g.fill(x, y, x + w, y + h, bg);
-        g.text(font, label, x + (w - font.width(label)) / 2, y + (h - 8) / 2, primary ? 0xFF111111 : 0xFFFFFFFF, false);
+        int top = primary ? Gfx.lerp(c.uiAccent, 0xFFFFFFFF, 0.18f) : (in(mx, my, x, y, w, h) ? 0xF02A2A34 : 0xE0202028);
+        int bot = primary ? c.uiAccent : (in(mx, my, x, y, w, h) ? 0xF0222229 : 0xE0181820);
+        Gfx.roundV(g, x, y, w, h, 8, top, bot);
+        g.text(font, label, x + (w - font.width(label)) / 2, y + (h - 8) / 2, 0xFFFFFFFF, false);
     }
 
     private String topAt(double mx, double my) {

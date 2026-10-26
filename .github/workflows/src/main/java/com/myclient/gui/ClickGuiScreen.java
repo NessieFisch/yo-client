@@ -2,6 +2,7 @@ package com.myclient.gui;
 
 import com.myclient.ClientConfig;
 import com.myclient.ScreenUtil;
+import com.myclient.hud.Gfx;
 import com.myclient.hud.HudRenderer;
 import com.myclient.hud.Icons;
 import com.myclient.music.MusicPlayer;
@@ -16,6 +17,7 @@ import net.minecraft.network.chat.Component;
 import org.lwjgl.glfw.GLFW;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.function.Consumer;
 import java.util.function.DoubleConsumer;
@@ -29,7 +31,6 @@ public class ClickGuiScreen extends Screen {
             { "Cursor", "Pointer & aim" }, { "Music", "Local & YT" }, { "Themes", "Colors" }, { "Settings", "Client options" } };
     private static final int[] COLORS = {
             0xFF8B6CFF, 0xFFE8B931, 0xFFFFFFFF, 0xFFFF5555, 0xFF55FF88, 0xFF55AAFF, 0xFFFF77CC, 0xFF00E5E5 };
-    private static final int GRAY = 0xFF77777F;
 
     private record Hit(int x, int y, int w, int h, DoubleConsumer fn, boolean slider) {
         boolean in(double mx, double my) { return mx >= x && mx < x + w && my >= y && my < y + h; }
@@ -44,6 +45,17 @@ public class ClickGuiScreen extends Screen {
     private String search = "";
     private boolean searchFocus;
     private int scroll, mx, my, x0, y0, pw, ph;
+    private final HashMap<String, Float> anims = new HashMap<>();
+    private long lastNs = System.nanoTime(), openNs = System.nanoTime();
+    private float dt;
+
+    private float anim(String key, float target) {
+        float v = anims.getOrDefault(key, target);
+        v += (target - v) * Math.min(1f, dt * 16f);
+        if (Math.abs(target - v) < 0.003f) v = target;
+        anims.put(key, v);
+        return v;
+    }
 
     public ClickGuiScreen() {
         super(Component.literal("Client"));
@@ -91,6 +103,7 @@ public class ClickGuiScreen extends Screen {
     // ---------- lifecycle ----------
     @Override
     protected void init() {
+        openNs = System.nanoTime();
         GLFW.glfwSetInputMode(minecraft.getWindow().handle(), GLFW.GLFW_CURSOR, GLFW.GLFW_CURSOR_HIDDEN);
     }
 
@@ -104,6 +117,8 @@ public class ClickGuiScreen extends Screen {
     public boolean isPauseScreen() { return false; }
 
     // ---------- small helpers ----------
+    private static final int TXT = 0xFFEDEDF4, SUB = 0xFF84848F;
+
     private boolean in(int x, int y, int w, int h) { return mx >= x && mx < x + w && my >= y && my < y + h; }
 
     private String fit(String s, int max) {
@@ -113,27 +128,34 @@ public class ClickGuiScreen extends Screen {
 
     private int ui() { return c().uiAccent; }
 
-    private void toggle(GuiGraphicsExtractor g, int x, int y, boolean on) {
-        HudRenderer.roundRect(g, x, y, 26, 12, 6, on ? ui() : 0xFF35353F);
-        HudRenderer.roundRect(g, on ? x + 16 : x + 2, y + 2, 8, 8, 4, 0xFFFFFFFF);
+    private void toggle(GuiGraphicsExtractor g, int x, int y, boolean on, String key) {
+        float t = anim("tg" + key, on ? 1f : 0f);
+        int off = 0xFF2C2C36;
+        Gfx.roundV(g, x, y, 28, 14, 7, Gfx.lerp(off, Gfx.lerp(ui(), 0xFFFFFFFF, 0.2f), t), Gfx.lerp(off, ui(), t));
+        Gfx.circle(g, x + 7 + 14 * t, y + 7.4f, 5.2f, 0x33000000);
+        Gfx.circle(g, x + 7 + 14 * t, y + 7, 5f, 0xFFFFFFFF);
     }
 
     private void button(GuiGraphicsExtractor g, String label, int x, int y, int w, int h, boolean active, Runnable r) {
-        boolean hover = in(x, y, w, h);
-        int bg = active ? ((ui() & 0x00FFFFFF) | 0xDD000000) : hover ? 0xFF24242D : 0xFF1A1A22;
-        HudRenderer.roundRect(g, x, y, w, h, 4, bg);
+        float hv = anim("bt" + x + "," + y + "," + page, in(x, y, w, h) ? 1f : 0f);
+        int top = active ? Gfx.lerp(ui(), 0xFFFFFFFF, 0.18f) : Gfx.lerp(0xFF1B1B23, 0xFF2A2A35, hv);
+        int bot = active ? ui() : Gfx.lerp(0xFF16161C, 0xFF22222B, hv);
+        Gfx.border(g, x, y, w, h, 7, active ? 0x00000000 : 0x16FFFFFF, top, bot);
         g.text(font, label, x + (w - font.width(label)) / 2, y + (h - 8) / 2, 0xFFFFFFFF, false);
         hits.add(new Hit(x, y, w, h, d -> r.run(), false));
     }
 
     private void slider(GuiGraphicsExtractor g, String label, int x, int y, int w, float min, float max, float val, Consumer<Float> set) {
-        g.text(font, label + ": " + String.format("%.2f", val), x, y, 0xFFFFFFFF, true);
-        int ty = y + 13;
-        HudRenderer.roundRect(g, x, ty, w, 4, 2, 0xFF2A2A33);
-        int fw = (int) (w * (val - min) / (max - min));
-        HudRenderer.roundRect(g, x, ty, Math.max(4, fw), 4, 2, ui());
-        HudRenderer.roundRect(g, Math.max(x, x + fw - 4), ty - 2, 8, 8, 4, 0xFFFFFFFF);
-        hits.add(new Hit(x, ty - 5, w, 14, d -> {
+        g.text(font, label, x, y, TXT, false);
+        String v = String.format("%.2f", val);
+        g.text(font, v, x + w - font.width(v), y, SUB, false);
+        int ty = y + 14;
+        Gfx.roundF(g, x, ty, w, 4, 2, 0xFF262630);
+        float fw = w * (val - min) / (max - min);
+        Gfx.roundV(g, x, ty, Math.max(4, (int) fw), 4, 2, Gfx.lerp(ui(), 0xFFFFFFFF, 0.25f), ui());
+        Gfx.circle(g, x + Math.max(2f, fw), ty + 2.6f, 6f, 0x33000000);
+        Gfx.circle(g, x + Math.max(2f, fw), ty + 2f, 5.2f, 0xFFFFFFFF);
+        hits.add(new Hit(x, ty - 6, w, 16, d -> {
             float t = (float) Math.max(0, Math.min(1, (d - x) / w));
             set.accept(min + t * (max - min));
         }, true));
@@ -141,26 +163,27 @@ public class ClickGuiScreen extends Screen {
 
     private void swatches(GuiGraphicsExtractor g, int x, int y, int current, Consumer<Integer> set) {
         for (int i = 0; i < COLORS.length; i++) {
-            int sx = x + i * 24, col = COLORS[i];
-            if (col == current) HudRenderer.roundRect(g, sx - 2, y - 2, 20, 20, 5, 0xFFFFFFFF);
-            HudRenderer.roundRect(g, sx, y, 16, 16, 4, col);
-            hits.add(new Hit(sx, y, 16, 16, d -> set.accept(col), false));
+            int sx = x + i * 26, col = COLORS[i];
+            if (col == current) Gfx.circle(g, sx + 9, y + 9, 10.5f, 0xFFFFFFFF);
+            Gfx.circle(g, sx + 9, y + 9, col == current ? 8.8f : 9f, col == current ? 0xFF101015 : col);
+            if (col == current) Gfx.circle(g, sx + 9, y + 9, 6.8f, col);
+            hits.add(new Hit(sx, y, 18, 18, d -> set.accept(col), false));
         }
     }
 
     private void drawRow(GuiGraphicsExtractor g, Feature f, int x, int y, int w) {
-        boolean hover = in(x, y, w, 26);
-        HudRenderer.roundRect(g, x, y, w, 26, 4, hover ? 0xFF1C1C25 : 0xFF15151B);
-        g.text(font, f.name(), x + 10, y + 5, 0xFFFFFFFF, true);
-        g.text(font, fit(f.desc(), w - 90), x + 10, y + 15, GRAY, false);
+        float hv = anim("row" + f.name() + page, in(x, y, w, 28) ? 1f : 0f);
+        Gfx.border(g, x, y, w, 28, 8, 0x14FFFFFF, Gfx.lerp(0xFF17171E, 0xFF20202A, hv), Gfx.lerp(0xFF131319, 0xFF1A1A23, hv));
+        g.text(font, f.name(), x + 12, y + 6, TXT, false);
+        g.text(font, fit(f.desc(), w - 100), x + 12, y + 16, SUB, false);
         if (f.action() != null) {
-            HudRenderer.roundRect(g, x + w - 52, y + 5, 44, 16, 4, ui());
-            g.text(font, "Open", x + w - 52 + (44 - font.width("Open")) / 2, y + 9, 0xFFFFFFFF, false);
-            hits.add(new Hit(x, y, w, 26, d -> f.action().run(), false));
+            Gfx.roundV(g, x + w - 56, y + 6, 46, 16, 8, Gfx.lerp(ui(), 0xFFFFFFFF, 0.2f), ui());
+            g.text(font, "Open", x + w - 56 + (46 - font.width("Open")) / 2, y + 10, 0xFFFFFFFF, false);
+            hits.add(new Hit(x, y, w, 28, d -> f.action().run(), false));
         } else {
             boolean on = f.get().get();
-            toggle(g, x + w - 36, y + 7, on);
-            hits.add(new Hit(x, y, w, 26, d -> f.set().accept(!on), false));
+            toggle(g, x + w - 42, y + 7, on, f.name());
+            hits.add(new Hit(x, y, w, 28, d -> f.set().accept(!on), false));
         }
     }
 
@@ -180,13 +203,13 @@ public class ClickGuiScreen extends Screen {
         boolean needArrows = scrollable && list.size() > visible;
         int rw = w - (needArrows ? 20 : 0);
         int rows = Math.min(visible, list.size() - start);
-        for (int i = 0; i < rows; i++) drawRow(g, list.get(start + i), x, y + i * 28, rw);
+        for (int i = 0; i < rows; i++) drawRow(g, list.get(start + i), x, y + i * 31, rw);
         if (needArrows) {
             button(g, "^", x + w - 16, y, 16, 16, false, () -> scroll--);
-            button(g, "v", x + w - 16, y + visible * 28 - 18, 16, 16, false, () -> scroll++);
+            button(g, "v", x + w - 16, y + visible * 31 - 19, 16, 16, false, () -> scroll++);
         }
-        if (list.isEmpty()) g.text(font, "Nothing found.", x, y + 4, GRAY, false);
-        return y + Math.max(rows, 0) * 28;
+        if (list.isEmpty()) g.text(font, "Nothing found.", x, y + 4, SUB, false);
+        return y + Math.max(rows, 0) * 31;
     }
 
     // ---------- main render ----------
@@ -194,55 +217,67 @@ public class ClickGuiScreen extends Screen {
     public void extractRenderState(GuiGraphicsExtractor g, int mouseX, int mouseY, float delta) {
         hits.clear();
         mx = mouseX; my = mouseY;
+        long now = System.nanoTime();
+        dt = Math.min(0.05f, (now - lastNs) / 1_000_000_000f);
+        lastNs = now;
+        float open = Math.min(1f, (now - openNs) / 200_000_000f);
+        float ease = 1f - (1f - open) * (1f - open) * (1f - open);
+
         ClientConfig c = c();
         int ui = c.uiAccent;
         pw = Math.min(440, width - 12);
         ph = Math.min(262, height - 8);
         x0 = (width - pw) / 2;
-        y0 = (height - ph) / 2;
+        y0 = (height - ph) / 2 + (int) ((1f - ease) * 14f);
 
-        g.fillGradient(0, 0, width, height, 0x55000000, 0x99000000);
-        HudRenderer.roundRect(g, x0 - 1, y0 - 1, pw + 2, ph + 2, 7, (ui & 0x00FFFFFF) | 0x44000000);
-        HudRenderer.roundRect(g, x0, y0, pw, ph, 6, 0xF2101015);
-        HudRenderer.roundRect(g, x0, y0, SB, ph, 6, 0xF20B0B0F);
-        g.fill(x0 + SB - 8, y0, x0 + SB, y0 + ph, 0xF20B0B0F);
-        g.fill(x0 + SB, y0 + 8, x0 + SB + 1, y0 + ph - 8, 0x22FFFFFF);
+        g.fillGradient(0, 0, width, height, Gfx.a(0x55000000, ease), Gfx.a(0xAA000000, ease));
+        Gfx.shadow(g, x0, y0, pw, ph, 12, 0x000000, 0x70, 6);
+        // 1px hairline outline, sidebar, content (content is squared on its left side)
+        Gfx.roundV2(g, x0 * 2, y0 * 2, pw * 2, ph * 2, 24, 0xFF2B2B36, 0xFF1B1B23);
+        Gfx.roundV2(g, x0 * 2 + 1, y0 * 2 + 1, pw * 2 - 2, ph * 2 - 2, 23, 0xFF0D0D12, 0xFF0A0A0E);
+        Gfx.roundV2(g, (x0 + SB) * 2, y0 * 2 + 1, (pw - SB) * 2 - 1, ph * 2 - 2, 23, 0xFF14141B, 0xFF0F0F15);
+        Gfx.fill2(g, (x0 + SB) * 2, y0 * 2 + 1, (x0 + SB + 14) * 2, (y0 + 14) * 2, 0xFF14141B);
+        Gfx.fill2(g, (x0 + SB) * 2, (y0 + ph - 14) * 2, (x0 + SB + 14) * 2, y0 * 2 + ph * 2 - 1, 0xFF0F0F15);
+        Gfx.fill2(g, (x0 + SB) * 2, (y0 + 12) * 2, (x0 + SB) * 2 + 1, (y0 + ph - 12) * 2, 0x14FFFFFF);
 
         // logo
-        HudRenderer.roundRect(g, x0 + 10, y0 + 10, 20, 20, 5, ui);
-        Icons.draw(g, Icons.CROWN, x0 + 15, y0 + 17, 0xFFFFFFFF);
-        g.text(font, "SPARED", x0 + 36, y0 + 12, 0xFFFFFFFF, true);
-        g.text(font, "Client 26.2", x0 + 36, y0 + 22, GRAY, false);
+        Gfx.roundV(g, x0 + 12, y0 + 11, 22, 22, 7, Gfx.lerp(ui, 0xFFFFFFFF, 0.3f), ui);
+        g.text(font, "S", x0 + 12 + (22 - font.width("S")) / 2, y0 + 18, 0xFFFFFFFF, true);
+        g.text(font, "Spared", x0 + 41, y0 + 13, TXT, true);
+        g.text(font, "Client  26.2", x0 + 41, y0 + 23, SUB, false);
 
         // search box
-        HudRenderer.roundRect(g, x0 + 10, y0 + 38, SB - 20, 16, 4, searchFocus ? 0xFF22222B : 0xFF16161C);
-        String shown = search.isEmpty() ? (searchFocus ? "" : "Search features...") : search;
+        Gfx.border(g, x0 + 10, y0 + 40, SB - 20, 18, 9, searchFocus ? Gfx.a(ui, 0.75f) : 0x14FFFFFF,
+                searchFocus ? 0xFF1B1B24 : 0xFF14141B, searchFocus ? 0xFF16161D : 0xFF111116);
+        String shown = search.isEmpty() ? (searchFocus ? "" : "Search...") : search;
         if (searchFocus && (System.currentTimeMillis() / 500) % 2 == 0) shown += "_";
-        g.text(font, fit(shown, SB - 32), x0 + 16, y0 + 42, search.isEmpty() && !searchFocus ? GRAY : 0xFFFFFFFF, false);
-        hits.add(new Hit(x0 + 10, y0 + 38, SB - 20, 16, d -> searchFocus = true, false));
+        g.text(font, fit(shown, SB - 38), x0 + 20, y0 + 45, search.isEmpty() && !searchFocus ? SUB : TXT, false);
+        hits.add(new Hit(x0 + 10, y0 + 40, SB - 20, 18, d -> searchFocus = true, false));
 
         // pages
         for (int i = 0; i < PAGES.length; i++) {
             final int idx = i;
-            int ey = y0 + 62 + i * 24;
+            int ey = y0 + 66 + i * 25;
             boolean sel = search.isEmpty() && page == i;
-            if (sel) {
-                HudRenderer.roundRect(g, x0 + 6, ey, SB - 12, 22, 4, (ui & 0x00FFFFFF) | 0x30000000);
-                g.fill(x0 + 6, ey + 4, x0 + 8, ey + 18, ui);
-            } else if (in(x0 + 6, ey, SB - 12, 22)) {
-                HudRenderer.roundRect(g, x0 + 6, ey, SB - 12, 22, 4, 0x18FFFFFF);
+            float sv = anim("pg" + i, sel ? 1f : 0f);
+            float hv = anim("ph" + i, in(x0 + 6, ey, SB - 12, 23) ? 1f : 0f);
+            if (sv > 0.01f) {
+                Gfx.roundV(g, x0 + 7, ey, SB - 14, 23, 8, Gfx.a(ui, 0.30f * sv), Gfx.a(ui, 0.12f * sv));
+                Gfx.roundF(g, x0 + 7, ey + 5, 2.2f, 13, 1.1f, Gfx.a(ui, sv));
+            } else if (hv > 0.01f) {
+                Gfx.round(g, x0 + 7, ey, SB - 14, 23, 8, Gfx.a(0xFFFFFFFF, 0.06f * hv));
             }
-            g.text(font, PAGES[i][0], x0 + 16, ey + 3, sel ? 0xFFFFFFFF : 0xFFBBBBC4, false);
-            g.text(font, PAGES[i][1], x0 + 16, ey + 12, 0xFF5E5E66, false);
-            hits.add(new Hit(x0 + 6, ey, SB - 12, 22, d -> { page = idx; search = ""; searchFocus = false; scroll = 0; }, false));
+            g.text(font, PAGES[i][0], x0 + 17, ey + 3, sel ? 0xFFFFFFFF : 0xFFC0C0CA, false);
+            g.text(font, PAGES[i][1], x0 + 17, ey + 13, 0xFF5C5C66, false);
+            hits.add(new Hit(x0 + 6, ey, SB - 12, 23, d -> { page = idx; search = ""; searchFocus = false; scroll = 0; }, false));
         }
 
         // header
         int cx = x0 + SB + 14, cw = pw - SB - 28, cy = y0 + 44;
         boolean searching = !search.isEmpty();
         g.text(font, searching ? "Search" : PAGES[page][0], cx, y0 + 12, 0xFFFFFFFF, true);
-        g.text(font, searching ? "Results for \"" + search + "\"" : PAGES[page][1], cx, y0 + 23, GRAY, false);
-        g.fill(cx, y0 + 36, cx + cw, y0 + 37, 0x22FFFFFF);
+        g.text(font, searching ? "Results for \"" + search + "\"" : PAGES[page][1], cx, y0 + 23, SUB, false);
+        Gfx.fill2(g, cx * 2, (y0 + 36) * 2, (cx + cw) * 2, (y0 + 36) * 2 + 1, 0x1AFFFFFF);
 
         if (searching) featureRows(g, cx, cy, cw, null, search.toLowerCase(), 6, true);
         else switch (page) {
@@ -255,7 +290,7 @@ public class ClickGuiScreen extends Screen {
             case 6 -> settingsPage(g, cx, cy, cw);
         }
 
-        g.text(font, "Right Shift to close", cx, y0 + ph - 12, 0xFF55555C, false);
+        g.text(font, "Right Shift to close", cx, y0 + ph - 13, 0xFF4E4E58, false);
         CursorRenderer.draw(g, mouseX, mouseY, c.cursor, c.cursorColor, c.cursorSize);
     }
 
@@ -276,7 +311,7 @@ public class ClickGuiScreen extends Screen {
     private void utilityPage(GuiGraphicsExtractor g, int x, int y, int w) {
         int ny = featureRows(g, x, y, w, "Utility", null, 6, false);
         slider(g, "Zoom FOV (hold C)", x, ny + 10, w, 30f, 90f, c().zoomFov, v -> c().zoomFov = v);
-        g.text(font, "Rebind zoom in Options > Controls", x, ny + 40, GRAY, false);
+        g.text(font, "Rebind zoom in Options > Controls", x, ny + 40, SUB, false);
     }
 
     private void cursorPage(GuiGraphicsExtractor g, int x, int y, int w) {
@@ -292,7 +327,7 @@ public class ClickGuiScreen extends Screen {
         swatches(g, x, y + 52, c.cursorColor, col -> c().cursorColor = col);
         slider(g, "Size", x, y + 80, w, 0.5f, 3f, c.cursorSize, v -> c().cursorSize = v);
         int ny = featureRows(g, x, y + 112, w, "Cursor", null, 2, false);
-        g.text(font, "Preview:", x, ny + 10, GRAY, false);
+        g.text(font, "Preview:", x, ny + 10, SUB, false);
         CursorRenderer.draw(g, x + 60, ny + 14, c.cursor, c.cursorColor, c.cursorSize);
     }
 
@@ -309,11 +344,11 @@ public class ClickGuiScreen extends Screen {
         if (c.systemMusic) {
             g.text(font, "Shows what plays on your PC: YouTube Music in", x, y + 34, 0xFFFFFFFF, true);
             g.text(font, "Chrome/Edge, Spotify, etc. Open music.youtube.com", x, y + 46, 0xFFFFFFFF, true);
-            g.text(font, "and play a song. |< Play >| are your media keys.", x, y + 58, GRAY, false);
-            g.text(font, "Volume: use the browser. Windows only.", x, y + 70, GRAY, false);
+            g.text(font, "and play a song. |< Play >| are your media keys.", x, y + 58, SUB, false);
+            g.text(font, "Volume: use the browser. Windows only.", x, y + 70, SUB, false);
             return;
         }
-        g.text(font, "Put .mp3 / .wav in .minecraft/myclient_music, then Rescan", x, y + 26, GRAY, false);
+        g.text(font, "Put .mp3 / .wav in .minecraft/myclient_music, then Rescan", x, y + 26, SUB, false);
         slider(g, "Volume", x, y + 40, w, 0f, 1f, c.musicVolume, v -> { c().musicVolume = v; MusicPlayer.setVolume(v); });
         List<String> names = MusicPlayer.names();
         if (names.isEmpty()) {
@@ -342,8 +377,8 @@ public class ClickGuiScreen extends Screen {
     private void settingsPage(GuiGraphicsExtractor g, int x, int y, int w) {
         g.text(font, "Right Shift  -  open this menu", x, y, 0xFFFFFFFF, true);
         g.text(font, "C (hold)  -  zoom", x, y + 12, 0xFFFFFFFF, true);
-        g.text(font, "Config: .minecraft/config/myclient.json", x, y + 30, GRAY, false);
-        g.text(font, "Music: .minecraft/myclient_music", x, y + 42, GRAY, false);
+        g.text(font, "Config: .minecraft/config/myclient.json", x, y + 30, SUB, false);
+        g.text(font, "Music: .minecraft/myclient_music", x, y + 42, SUB, false);
         button(g, "Reset all settings", x, y + 64, 140, 20, false, ClientConfig::reset);
     }
 

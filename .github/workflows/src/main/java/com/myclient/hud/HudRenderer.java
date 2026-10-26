@@ -35,15 +35,9 @@ public final class HudRenderer {
         push(memHist, (rt.totalMemory() - rt.freeMemory()) / (float) rt.maxMemory());
     }
 
-    // ---------- drawing helpers ----------
+    // ---------- shared helpers (ModHud uses these too) ----------
     public static void roundRect(GuiGraphicsExtractor g, int x, int y, int w, int h, int r, int color) {
-        r = Math.max(0, Math.min(r, Math.min(w, h) / 2));
-        for (int i = 0; i < h; i++) {
-            int inset = 0;
-            if (i < r) inset = r - (int) Math.sqrt(r * r - (r - i) * (r - i));
-            else if (i >= h - r) { int j = h - 1 - i; inset = r - (int) Math.sqrt(r * r - (r - j) * (r - j)); }
-            g.fill(x + inset, y + i, x + w - inset, y + i + 1, color);
-        }
+        Gfx.round(g, x, y, w, h, r, color);
     }
 
     /** dark version of the accent colour, used for glass backgrounds */
@@ -52,22 +46,31 @@ public final class HudRenderer {
         return (alpha << 24) | (r << 16) | (gr << 8) | b;
     }
 
-    /** Glass panel: soft glow, accent border, tinted translucent inside, top shine. */
     public static void panel(GuiGraphicsExtractor g, int x, int y, int w, int h, int accent) {
-        int rad = Math.min(6, h / 2);
-        roundRect(g, x - 2, y - 2, w + 4, h + 4, rad + 2, (accent & 0x00FFFFFF) | 0x16000000);
-        roundRect(g, x, y, w, h, rad, (accent & 0x00FFFFFF) | 0xB0000000);
-        roundRect(g, x + 1, y + 1, w - 2, h - 2, Math.max(1, rad - 1), tint(accent, 0.20f, 0xC4));
-        g.fill(x + rad, y + 1, x + w - rad, y + 2, 0x22FFFFFF);
+        panelR(g, x, y, w, h, Math.min(7, h / 2), accent);
     }
 
+    /** Modern glass panel: soft glow, hairline border, gradient body, top shine. */
+    public static void panelR(GuiGraphicsExtractor g, int x, int y, int w, int h, int r, int accent) {
+        Gfx.shadow(g, x, y, w, h, r, accent, 0x2C, 0);
+        Gfx.border(g, x, y, w, h, r, (accent & 0x00FFFFFF) | 0x66000000,
+                tint(accent, 0.30f, 0xCC), tint(accent, 0.10f, 0xE0));
+        Gfx.shine(g, x, y, w, r);
+    }
+
+    /** Smooth area graph. */
     private static void spark(GuiGraphicsExtractor g, int x, int y, int w, int h, float[] hist, float max, int color) {
-        int cw = Math.max(1, w / hist.length);
-        for (int i = 0; i < hist.length; i++) {
-            int bh = (int) Math.min(h - 1, Math.max(1, hist[i] / max * h));
-            int yy = y + h - bh;
-            g.fill(x + i * cw, yy, x + (i + 1) * cw, yy + 1, color);
-            g.fill(x + i * cw, yy + 1, x + (i + 1) * cw, y + h, (color & 0x00FFFFFF) | 0x28000000);
+        int top2 = y * 2, bot2 = (y + h) * 2;
+        int prev = -1;
+        for (int i = 0; i < w; i++) {
+            float pos = i * (hist.length - 1) / (float) (w - 1);
+            int i0 = (int) pos, i1 = Math.min(hist.length - 1, i0 + 1);
+            float v = hist[i0] + (hist[i1] - hist[i0]) * (pos - i0);
+            int yy = bot2 - Math.max(2, Math.min((h * 2) - 1, (int) (v / max * h * 2)));
+            Gfx.gradient2(g, (x + i) * 2, yy, (x + i) * 2 + 2, bot2, Gfx.a(color, 0.40f), Gfx.a(color, 0f));
+            int y1 = prev < 0 ? yy : Math.min(prev, yy), y2 = prev < 0 ? yy + 2 : Math.max(prev, yy) + 2;
+            Gfx.fill2(g, (x + i) * 2, y1, (x + i) * 2 + 2, y2, color);
+            prev = yy;
         }
     }
 
@@ -86,79 +89,87 @@ public final class HudRenderer {
         if (nowNs - fpsStamp >= 1_000_000_000L) { fps = frames; frames = 0; fpsStamp = nowNs; }
         int W = g.guiWidth(), H = g.guiHeight();
         int accent = c.accent;
-        int dim = (accent & 0x00FFFFFF) | 0x66000000;
+        int dim = (accent & 0x00FFFFFF) | 0x55000000;
 
         HudLayout.begin();
         ModHud.render(g, mc, c);
 
-        // ---- top bar: [head] name | [monitor] fps | [cloud] mode | [clock] time ----
+        // ---- top bar: pill with avatar | monitor fps | cloud mode | clock time ----
         if (c.showTopBar) {
+            String name = mc.getUser().getName();
             String mode = mc.getSingleplayerServer() != null ? "Singleplayer"
                     : (mc.getCurrentServer() != null ? mc.getCurrentServer().ip : "Multiplayer");
-            String[] texts = { mc.getUser().getName(), fps + " FPS", mode, LocalTime.now().format(FMT) };
-            String[][] icons = { Icons.HEAD, Icons.MONITOR, Icons.CLOUD, Icons.CLOCK };
-            int pad = 11, gap = 6, sep = 16, h = 22;
+            String[] texts = { name, fps + " FPS", mode, LocalTime.now().format(FMT) };
+            int[] iw = { 14, 11, 12, 10 };
+            int pad = 13, gap = 6, sep = 18, h = 24;
             int total = pad * 2 + sep * 3;
-            for (int i = 0; i < 4; i++) total += Icons.w(icons[i]) + gap + tr.width(texts[i]);
+            for (int i = 0; i < 4; i++) total += iw[i] + gap + tr.width(texts[i]);
             int[] pos = HudLayout.place("topbar", total, h, (W - total) / 2, 5, W, H);
             int x = pos[0], y = pos[1], cx = x + pad, mid = y + h / 2;
-            panel(g, x, y, total, h, accent);
+            panelR(g, x, y, total, h, h / 2, accent);
             for (int i = 0; i < 4; i++) {
-                int iy = mid - Icons.h(icons[i]) / 2;
-                if (i == 0) Icons.head(g, cx, iy); else Icons.draw(g, icons[i], cx, iy, accent);
-                cx += Icons.w(icons[i]) + gap;
+                switch (i) {
+                    case 0 -> Icons.avatar(g, tr, cx, mid - 7, name, accent);
+                    case 1 -> Icons.monitor(g, cx, mid - 4, accent);
+                    case 2 -> Icons.cloud(g, cx, mid - 4, accent);
+                    default -> Icons.clock(g, cx, mid - 5, accent);
+                }
+                cx += iw[i] + gap;
                 g.text(tr, texts[i], cx, mid - 4, 0xFFFFFFFF, true);
                 cx += tr.width(texts[i]);
-                if (i < 3) { g.fill(cx + sep / 2, y + 5, cx + sep / 2 + 1, y + h - 5, dim); cx += sep; }
+                if (i < 3) { Gfx.rectF(g, cx + sep / 2f, y + 7, 0.5f, h - 14, dim); cx += sep; }
             }
         }
 
         // ---- speed ----
         if (c.showSpeed) {
-            int[] pos = HudLayout.place("speed", 96, 30, 8, 34, W, H);
-            panel(g, pos[0], pos[1], 96, 30, accent);
-            g.text(tr, String.format("Speed - %.1f b/s", speed), pos[0] + 7, pos[1] + 5, 0xFFFFFFFF, true);
-            spark(g, pos[0] + 7, pos[1] + 16, 82, 9, speedHist, 12f, accent);
+            int[] pos = HudLayout.place("speed", 100, 32, 8, 34, W, H);
+            panel(g, pos[0], pos[1], 100, 32, accent);
+            g.text(tr, String.format("Speed - %.1f b/s", speed), pos[0] + 8, pos[1] + 5, 0xFFFFFFFF, true);
+            spark(g, pos[0] + 8, pos[1] + 17, 84, 10, speedHist, 12f, accent);
         }
 
         // ---- music card ----
         if (c.showMusic) {
-            int mw = 176, mh = 46;
-            int[] pos = HudLayout.place("music", mw, mh, (W - mw) / 2, 32, W, H);
+            int mw = 180, mh = 50;
+            int[] pos = HudLayout.place("music", mw, mh, (W - mw) / 2, 33, W, H);
             int mx = pos[0], my = pos[1];
-            panel(g, mx, my, mw, mh, accent);
-            roundRect(g, mx + 6, my + 7, 32, 32, 4, tint(accent, 0.55f, 0xE0));
-            Icons.draw(g, Icons.NOTE, mx + 6 + 12, my + 7 + 12, 0xFFFFFFFF);
-            g.text(tr, fit(tr, MusicPlayer.title(), mw - 56), mx + 44, my + 6, 0xFFFFFFFF, true);
-            g.text(tr, fit(tr, MusicPlayer.artist(), mw - 56), mx + 44, my + 16, 0xFFB8B8B8, false);
-            int mid = mx + 44 + (mw - 52) / 2;
-            Icons.draw(g, Icons.PREV, mid - 18, my + 26, 0xFFFFFFFF);
-            Icons.draw(g, MusicPlayer.isPlaying() ? Icons.PAUSE : Icons.PLAY, mid - 2, my + 26, 0xFFFFFFFF);
-            Icons.draw(g, Icons.NEXT, mid + 12, my + 26, 0xFFFFFFFF);
-            int bx = mx + 44, bw = mw - 52, by = my + 38;
-            roundRect(g, bx, by, bw, 3, 1, (accent & 0x00FFFFFF) | 0x44000000);
-            roundRect(g, bx, by, Math.max(2, (int) (bw * MusicPlayer.progress())), 3, 1, accent);
+            panelR(g, mx, my, mw, mh, 9, accent);
+            Gfx.roundV(g, mx + 7, my + 8, 34, 34, 8, tint(accent, 0.95f, 0xFF), tint(accent, 0.45f, 0xFF));
+            Icons.note(g, mx + 7 + 13, my + 8 + 11, 0xFFFFFFFF);
+            int tx = mx + 49, tw = mw - 57;
+            g.text(tr, fit(tr, MusicPlayer.title(), tw), tx, my + 7, 0xFFFFFFFF, true);
+            g.text(tr, fit(tr, MusicPlayer.artist(), tw), tx, my + 17, 0xFFB4B4BC, false);
+            int mid = tx + tw / 2;
+            Icons.prev(g, mid - 22, my + 28, 0xFFFFFFFF);
+            if (MusicPlayer.isPlaying()) Icons.pause(g, mid - 3, my + 27, 0xFFFFFFFF); else Icons.play(g, mid - 3, my + 27, 0xFFFFFFFF);
+            Icons.next(g, mid + 14, my + 28, 0xFFFFFFFF);
+            int by = my + 41;
+            Gfx.roundF(g, tx, by, tw, 3, 1.5f, (accent & 0x00FFFFFF) | 0x44000000);
+            float prog = MusicPlayer.progress();
+            Gfx.roundF(g, tx, by, Math.max(3, tw * prog), 3, 1.5f, accent);
+            Gfx.circle(g, tx + Math.max(1.5f, tw * prog), by + 1.5f, 2.6f, 0xFFFFFFFF);
         }
 
         // ---- coordinates ----
         if (c.showCoords && mc.player != null) {
             String s = String.format("x %d   y %d   z %d", (int) Math.floor(mc.player.getX()),
                     (int) Math.floor(mc.player.getY()), (int) Math.floor(mc.player.getZ()));
-            int w = tr.width(s) + 14 + 12, h = 16;
-            int[] pos = HudLayout.place("coords", w, h, (W - w) / 2, 82, W, H);
-            panel(g, pos[0], pos[1], w, h, accent);
-            Icons.draw(g, Icons.ARROW, pos[0] + 7, pos[1] + 5, accent);
-            g.text(tr, s, pos[0] + 19, pos[1] + 4, 0xFFFFFFFF, true);
+            int w = tr.width(s) + 14 + 14, h = 17;
+            int[] pos = HudLayout.place("coords", w, h, (W - w) / 2, 87, W, H);
+            panelR(g, pos[0], pos[1], w, h, h / 2, accent);
+            Icons.arrow(g, pos[0] + 9, pos[1] + 4, accent);
+            g.text(tr, s, pos[0] + 21, pos[1] + 5, 0xFFFFFFFF, true);
         }
 
         // ---- RAM ----
         if (c.showMemory) {
             Runtime rt = Runtime.getRuntime();
             long used = (rt.totalMemory() - rt.freeMemory()) / 1048576L, max = rt.maxMemory() / 1048576L;
-            int[] pos = HudLayout.place("ram", 96, 30, W - 104, 34, W, H);
-            panel(g, pos[0], pos[1], 96, 30, accent);
-            g.text(tr, "RAM Usage - " + (used * 100 / max) + "%", pos[0] + 7, pos[1] + 5, 0xFFFFFFFF, true);
-            spark(g, pos[0] + 7, pos[1] + 16, 82, 9, memHist, 1f, accent);
+            int[] pos = HudLayout.place("ram", 100, 32, W - 108, 34, W, H);
+            panel(g, pos[0], pos[1], 100, 32, accent);
+            g.text(tr, "RAM Usage - " + (used * 100 / max) + "%", pos[0] + 8, pos[1] + 5, 0xFFFFFFFF, true);
+            spark(g, pos[0] + 8, pos[1] + 17, 84, 10, memHist, 1f, accent);
         }
     }
 }
